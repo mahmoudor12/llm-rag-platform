@@ -1,0 +1,18 @@
+# Web
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Config & Daten
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+
+# HTTP
+httpx==0.28.1
+
+# Vector Store
+qdrant-client==1.12.1
+
+# Embeddings
+sentence-transformers==3.3.1
+numpy==2.2.1

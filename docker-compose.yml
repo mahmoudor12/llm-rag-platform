@@ -1,0 +1,74 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: rag-qdrant
+    ports:
+      - "6333:6333" # REST API
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  ollama:
+    image: ollama/ollama:0.5.4
+    container_name: rag-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  # Einmaliger Init-Container: zieht Modelle beim ersten Start
+  ollama-init:
+    image: ollama/ollama:0.5.4
+    container_name: rag-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "📥 Ziehe qwen2.5:3b (~2 GB)..."
+        ollama pull qwen2.5:3b
+        echo "✅ Modell bereit."
+    restart: "no"
+
+  api:
+    build: .
+    container_name: rag-api
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8010:8000" # Host-Port 8010 → Container-Port 8000
+    environment:
+      LLM_PROVIDER: ollama
+      LLM_MODEL: qwen2.5:3b
+      OLLAMA_HOST: http://ollama:11434
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      EMBEDDING_MODEL: BAAI/bge-small-en-v1.5
+      HF_HOME: /app/.cache/huggingface
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - hf_cache:/app/.cache/huggingface
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  qdrant_data:
+  ollama_data:
+  hf_cache:
