@@ -16,3 +16,8 @@ qdrant-client==1.12.1
 # Embeddings
 sentence-transformers==3.3.1
 numpy==2.2.1
+
+tiktoken==0.14.0
+
+bs4==0.0.2
+lxml==5.3.0
