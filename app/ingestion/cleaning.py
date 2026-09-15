@@ -5,6 +5,7 @@ Entfernt Artefakte, die das Chunking und Retrieval stören:
     - übermäßige Leerzeilen
     - HTML-Reste
     - Markdown-Bilder (die als Text keinen Wert haben)
+    - FastAPI-Include-Directives ({* ... *})
     - Trailing Whitespace
 """
 import logging
@@ -22,6 +23,9 @@ _TRAILING_WS = re.compile(r"[ \t]+\n")
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]+\)")            # ![alt](url)
 _MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")            # [text](url) → text
 _MD_BADGE = re.compile(r"\[!\[[^\]]*\]\([^)]+\)\]\([^)]+\)")  # verschachtelt
+# FastAPI-Include-Directives: {* ../path/file.py hl[10] *}
+# Können mehrzeilig sein → DOTALL
+_MD_INCLUDE = re.compile(r"\{\*.*?\*\}", re.DOTALL)
 
 
 def clean_markdown(content: str) -> str:
@@ -33,7 +37,10 @@ def clean_markdown(content: str) -> str:
     # 2. Links: [text](url) → text
     content = _MD_LINK.sub(r"\1", content)
 
-    # 3. HTML-Reste entfernen
+    # 3. FastAPI-Include-Directives entfernen (Rauschen im Retrieval-Kontext)
+    content = _MD_INCLUDE.sub("", content)
+
+    # 4. HTML-Reste entfernen
     if "<" in content and ">" in content:
         try:
             content = BeautifulSoup(content, "lxml").get_text("\n")

@@ -1,23 +1,34 @@
 """
-FastAPI Service für die RAG-Plattform.
+FastAPI Service fuer die RAG-Plattform.
 
-Aktuelle Version: Provider-Health + Direkt-LLM-Query (ohne Retrieval).
-Retrieval folgt in Tag 5-7, wenn Embeddings + Qdrant-Index stehen.
+Endpoints:
+    GET  /health               Service-Status
+    GET  /ready                Readiness-Check
+    GET  /v1/provider          Provider-Info
+    GET  /v1/documents         Indexierte Dokumente (Uebersicht)
+    POST /v1/query             RAG-Query: Retrieval + Generation + Quellen
 """
 import logging
+import time
+from collections import Counter
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from qdrant_client import QdrantClient
 
 from app.config import settings
+from app.embeddings import get_embedding_provider
+from app.generation import SYSTEM_PROMPT, build_prompt
 from app.llm import create_provider
 from app.llm.provider import LLMProvider
+from app.retrieval import QdrantStore
 from app.schemas import (
+    DocumentInfo,
     HealthResponse,
     ProviderInfo,
     QueryRequest,
     QueryResponse,
+    Source,
 )
 
 logging.basicConfig(
@@ -27,29 +38,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# --- Global state (im lifespan initialisiert) ---
+# --- Globaler State ---
 _provider: LLMProvider | None = None
-_qdrant: QdrantClient | None = None
+_store: QdrantStore | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _provider, _qdrant
+    global _provider, _store
     logger.info(
-        "Starte RAG API — Provider=%s, Model=%s",
+        "Starte RAG API - Provider=%s, Model=%s, Collection=%s",
         settings.llm_provider,
         settings.llm_model,
+        settings.qdrant_collection,
     )
     _provider = create_provider()
-    _qdrant = QdrantClient(
-        host=settings.qdrant_host,
-        port=settings.qdrant_port,
-        timeout=5.0,
-    )
+    _store = QdrantStore()
     yield
     logger.info("Fahre RAG API herunter")
     _provider = None
-    _qdrant = None
+    _store = None
 
 
 app = FastAPI(
@@ -58,22 +66,21 @@ app = FastAPI(
         "Retrieval-Augmented Generation als Service. "
         "Provider-agnostisch (Ollama lokal oder Anthropic API)."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 
 def _check_dependencies() -> dict[str, bool]:
     checks: dict[str, bool] = {}
-
     try:
-        checks["ollama"] = _provider.health() if _provider else False
+        checks["llm"] = _provider.health() if _provider else False
     except Exception as e:
-        logger.warning("Ollama-Check fehlgeschlagen: %s", e)
-        checks["ollama"] = False
+        logger.warning("LLM-Check fehlgeschlagen: %s", e)
+        checks["llm"] = False
 
     try:
-        _qdrant.get_collections()
+        _store.client.get_collections()
         checks["qdrant"] = True
     except Exception as e:
         logger.warning("Qdrant-Check fehlgeschlagen: %s", e)
@@ -110,31 +117,104 @@ def provider_info():
     )
 
 
+@app.get("/v1/documents", response_model=list[DocumentInfo])
+def list_documents():
+    """Liste der indexierten Dokumente mit Chunk-Anzahl."""
+    try:
+        # Alle Punkte mit Payload abrufen (max 5000) und aggregieren
+        points, _ = _store.client.scroll(
+            collection_name=settings.qdrant_collection,
+            limit=5000,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Qdrant-Fehler: {e}")
+
+    counter: Counter[str] = Counter()
+    titles: dict[str, str] = {}
+    for p in points:
+        src = p.payload.get("source", "unknown")
+        counter[src] += 1
+        if src not in titles:
+            titles[src] = p.payload.get("title", src)
+
+    return [
+        DocumentInfo(source=src, title=titles[src], chunk_count=cnt)
+        for src, cnt in sorted(counter.items())
+    ]
+
+
 @app.post("/v1/query", response_model=QueryResponse)
 def query(req: QueryRequest):
-    """
-    Baseline-Endpoint: direkter LLM-Call ohne Retrieval.
-    Retrieval folgt in Tag 5-7 (Embeddings + Qdrant-Index).
-    """
-    if _provider is None:
-        raise HTTPException(status_code=503, detail="Provider nicht initialisiert")
+    """RAG-Pipeline: Retrieval -> Prompt -> LLM -> Antwort mit Quellen."""
+    if _provider is None or _store is None:
+        raise HTTPException(status_code=503, detail="Service nicht initialisiert")
 
-    system = (
-        "Du bist ein präziser, sachlicher Assistent. "
-        "Antworte kurz auf Deutsch, maximal 4 Sätze."
-    )
+    start = time.perf_counter()
 
+    # 1. Query embedden
     try:
-        resp = _provider.generate(prompt=req.question, system=system)
+        provider_emb = get_embedding_provider()
+        qvec = provider_emb.encode_query(req.question)
+    except Exception as e:
+        logger.exception("Embedding fehlgeschlagen")
+        raise HTTPException(status_code=500, detail=f"Embedding-Fehler: {e}")
+
+    # 2. Retrieval
+    try:
+        results = _store.search(qvec, top_k=req.top_k)
+    except Exception as e:
+        logger.exception("Qdrant-Suche fehlgeschlagen")
+        raise HTTPException(status_code=503, detail=f"Retrieval-Fehler: {e}")
+
+    if not results:
+        return QueryResponse(
+            answer=(
+                "Die bereitgestellten Dokumente enthalten dafuer "
+                "keine ausreichende Information."
+            ),
+            sources=[],
+            latency_ms=int((time.perf_counter() - start) * 1000),
+            retrieval_count=0,
+            model=settings.llm_model,
+            provider=settings.llm_provider,
+        )
+
+    # 3. Prompt bauen
+    prompt = build_prompt(req.question, results)
+
+    # 4. LLM
+    try:
+        llm_resp = _provider.generate(prompt=prompt, system=SYSTEM_PROMPT)
     except Exception as e:
         logger.exception("LLM-Call fehlgeschlagen")
         raise HTTPException(status_code=502, detail=f"LLM-Fehler: {e}")
 
+    # 5. Quellen aufbereiten
+    sources = [
+        Source(
+            source=r.source,
+            title=r.title,
+            chunk_id=r.chunk_id,
+            score=round(r.score, 4),
+        )
+        for r in results
+    ]
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    logger.info(
+        "Query beantwortet: retrieval=%d, llm_ms=%d, total_ms=%d",
+        len(results),
+        llm_resp.latency_ms,
+        latency_ms,
+    )
+
     return QueryResponse(
-        answer=resp.text,
-        sources=[],                 # noch kein Retrieval
-        latency_ms=resp.latency_ms,
-        retrieval_count=0,
-        model=resp.model,
-        provider=resp.provider,
+        answer=llm_resp.text,
+        sources=sources if req.include_sources else [],
+        latency_ms=latency_ms,
+        retrieval_count=len(results),
+        model=llm_resp.model,
+        provider=llm_resp.provider,
     )

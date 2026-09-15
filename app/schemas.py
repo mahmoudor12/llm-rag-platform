@@ -1,6 +1,5 @@
-"""
-Pydantic-Schemas für den API-Vertrag.
-"""
+
+"""Pydantic-Schemas fuer den API-Vertrag."""
 from pydantic import BaseModel, Field
 
 
@@ -12,7 +11,7 @@ class QueryRequest(BaseModel):
 
 class Source(BaseModel):
     source: str
-    page: int | None = None
+    title: str = ""
     chunk_id: str
     score: float
 
@@ -37,3 +36,9 @@ class ProviderInfo(BaseModel):
     provider: str
     model: str
     embedding_model: str
+
+
+class DocumentInfo(BaseModel):
+    source: str
+    title: str
+    chunk_count: int
