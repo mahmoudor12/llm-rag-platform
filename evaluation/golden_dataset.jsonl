@@ -1,0 +1,10 @@
+{"question": "How do I define path parameters in FastAPI?", "ground_truth": "You declare path parameters using curly braces in the route decorator, e.g. @app.get(\"/items/{item_id}\"). The value is passed as a function argument."}
+{"question": "What is the difference between query parameters and path parameters?", "ground_truth": "Path parameters are part of the URL path (/items/{id}), query parameters come after the ? (/items?id=5). Path parameters are required, query parameters are optional."}
+{"question": "How do I add request body validation with Pydantic?", "ground_truth": "You define a Pydantic BaseModel class and use it as a type annotation in the function parameter. FastAPI automatically validates the request body against the model."}
+{"question": "How do I handle errors in FastAPI?", "ground_truth": "You use HTTPException from fastapi, raise it with a status_code and detail message."}
+{"question": "What is the purpose of dependency injection in FastAPI?", "ground_truth": "Dependency injection allows sharing logic, database connections, and authentication across routes without repetition."}
+{"question": "How do I test a FastAPI application?", "ground_truth": "Use the TestClient from fastapi.testclient, which is based on HTTPX and allows synchronous test calls."}
+{"question": "How do I enable CORS in FastAPI?", "ground_truth": "Add CORSMiddleware to the app with allow_origins, allow_methods, and allow_headers configuration."}
+{"question": "What are background tasks in FastAPI?", "ground_truth": "Background tasks run after the response is sent, using the BackgroundTasks parameter. Useful for sending emails or logging without blocking the response."}
+{"question": "How do I use WebSockets in FastAPI?", "ground_truth": "Use @app.websocket(\"/ws\") decorator and accept connections via websocket.accept(), then use websocket.send_text() and websocket.receive_text()."}
+{"question": "How do I structure a larger FastAPI application?", "ground_truth": "Use APIRouter to split routes into modules, then include them in the main app via app.include_router()."}

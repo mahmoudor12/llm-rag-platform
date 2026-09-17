@@ -1,6 +1,6 @@
 
 """
-Ollama-Provider — lokale LLM-Inferenz.
+Ollama-Provider - lokale LLM-Inferenz.
 """
 import time
 import logging
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(LLMProvider):
-    def __init__(self, host: str, model: str, timeout: float = 120.0):
+    def __init__(self, host: str, model: str, timeout: float = 600.0):
         self.host = host.rstrip("/")
         self.model = model
         self.timeout = timeout
@@ -27,7 +27,7 @@ class OllamaProvider(LLMProvider):
             "stream": False,
             "options": {
                 "temperature": 0.1,
-                "num_predict": 512,
+                "num_predict": 200,
             },
         }
         if system:

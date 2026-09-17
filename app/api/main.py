@@ -1,3 +1,4 @@
+
 """
 FastAPI Service fuer die RAG-Plattform.
 
@@ -14,7 +15,6 @@ from collections import Counter
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from qdrant_client import QdrantClient
 
 from app.config import settings
 from app.embeddings import get_embedding_provider
@@ -37,8 +37,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# --- Globaler State ---
 _provider: LLMProvider | None = None
 _store: QdrantStore | None = None
 
@@ -62,10 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="LLM / RAG Platform",
-    description=(
-        "Retrieval-Augmented Generation als Service. "
-        "Provider-agnostisch (Ollama lokal oder Anthropic API)."
-    ),
+    description="Retrieval-Augmented Generation als Service.",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -78,14 +73,12 @@ def _check_dependencies() -> dict[str, bool]:
     except Exception as e:
         logger.warning("LLM-Check fehlgeschlagen: %s", e)
         checks["llm"] = False
-
     try:
         _store.client.get_collections()
         checks["qdrant"] = True
     except Exception as e:
         logger.warning("Qdrant-Check fehlgeschlagen: %s", e)
         checks["qdrant"] = False
-
     return checks
 
 
@@ -119,9 +112,7 @@ def provider_info():
 
 @app.get("/v1/documents", response_model=list[DocumentInfo])
 def list_documents():
-    """Liste der indexierten Dokumente mit Chunk-Anzahl."""
     try:
-        # Alle Punkte mit Payload abrufen (max 5000) und aggregieren
         points, _ = _store.client.scroll(
             collection_name=settings.qdrant_collection,
             limit=5000,
@@ -147,13 +138,11 @@ def list_documents():
 
 @app.post("/v1/query", response_model=QueryResponse)
 def query(req: QueryRequest):
-    """RAG-Pipeline: Retrieval -> Prompt -> LLM -> Antwort mit Quellen."""
     if _provider is None or _store is None:
         raise HTTPException(status_code=503, detail="Service nicht initialisiert")
 
     start = time.perf_counter()
 
-    # 1. Query embedden
     try:
         provider_emb = get_embedding_provider()
         qvec = provider_emb.encode_query(req.question)
@@ -161,7 +150,6 @@ def query(req: QueryRequest):
         logger.exception("Embedding fehlgeschlagen")
         raise HTTPException(status_code=500, detail=f"Embedding-Fehler: {e}")
 
-    # 2. Retrieval
     try:
         results = _store.search(qvec, top_k=req.top_k)
     except Exception as e:
@@ -181,17 +169,14 @@ def query(req: QueryRequest):
             provider=settings.llm_provider,
         )
 
-    # 3. Prompt bauen
     prompt = build_prompt(req.question, results)
 
-    # 4. LLM
     try:
         llm_resp = _provider.generate(prompt=prompt, system=SYSTEM_PROMPT)
     except Exception as e:
         logger.exception("LLM-Call fehlgeschlagen")
         raise HTTPException(status_code=502, detail=f"LLM-Fehler: {e}")
 
-    # 5. Quellen aufbereiten
     sources = [
         Source(
             source=r.source,

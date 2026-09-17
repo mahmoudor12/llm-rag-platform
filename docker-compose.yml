@@ -53,7 +53,7 @@ services:
       - "8010:8000" # Host-Port 8010 → Container-Port 8000
     environment:
       LLM_PROVIDER: ollama
-      LLM_MODEL: qwen2.5:3b
+      LLM_MODEL: qwen2.5:1.5b
       OLLAMA_HOST: http://ollama:11434
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333

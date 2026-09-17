@@ -21,3 +21,6 @@ tiktoken==0.14.0
 
 bs4==0.0.2
 lxml==5.3.0
+
+ragas==0.2.6
+datasets==3.2.0
